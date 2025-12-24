@@ -165,7 +165,9 @@ def get_db():
 @dataclass
 class DesktopAgent:
     websocket: WebSocket
-    user_id: str
+    user_id: Optional[str] = None  # None until paired
+    agent_id: Optional[str] = None
+    pairing_code: Optional[str] = None
     connected_at: float = field(default_factory=time.time)
     mobile_client: Optional[WebSocket] = None
 
@@ -180,7 +182,8 @@ class User:
 
 
 # In-memory (WebSocket connections only)
-desktop_agents: dict[str, DesktopAgent] = {}
+desktop_agents: dict[str, DesktopAgent] = {}  # user_id -> agent
+pending_agents: dict[str, DesktopAgent] = {}  # pairing_code -> agent (awaiting pairing)
 
 
 # =============================================================================
@@ -421,6 +424,43 @@ async def status(credentials: HTTPAuthorizationCredentials = Depends(security)):
         "desktop_connected": agent is not None,
         "connected_since": agent.connected_at if agent else None,
     }
+
+
+@app.post("/api/pair-agent")
+async def pair_with_agent(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Pair with a desktop agent using its pairing code."""
+    user = get_user_from_api_key(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    data = await request.json()
+    code = data.get("code", "").upper().strip()
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Pairing code required")
+
+    # Find pending agent with this code
+    agent = pending_agents.get(code)
+    if not agent:
+        raise HTTPException(status_code=404, detail="No agent found with this code. Make sure the agent is running.")
+
+    # Pair the agent with this user
+    agent.user_id = user.user_id
+    desktop_agents[user.user_id] = agent
+    del pending_agents[code]
+
+    # Notify the agent it's paired
+    try:
+        await agent.websocket.send_json({
+            "type": "paired",
+            "user_id": user.user_id,
+            "message": "Successfully paired with user"
+        })
+    except:
+        pass
+
+    print(f"[Agent] Paired: {code} -> user {user.user_id[:8]}...")
+    return {"success": True, "message": "Agent paired successfully"}
 
 
 @app.get("/api/me")
@@ -1495,19 +1535,27 @@ async def sync_chat_to_github(github_username: str, github_token: str, project_i
 # =============================================================================
 
 @app.websocket("/ws/agent")
-async def agent_websocket(websocket: WebSocket, api_key: str):
-    """WebSocket for desktop agents."""
-    user = get_user_from_api_key(api_key)
-    if not user:
-        await websocket.close(code=4001, reason="Invalid API key")
-        return
-
+async def agent_websocket(websocket: WebSocket, api_key: str = None):
+    """WebSocket for desktop agents. Accepts either api_key or waits for pairing code registration."""
     await websocket.accept()
 
-    agent = DesktopAgent(websocket=websocket, user_id=user.user_id)
-    desktop_agents[user.user_id] = agent
+    agent = None
+    user = None
+    pairing_code = None
 
-    print(f"[Agent] Connected: {user.user_id[:8]}...")
+    # If api_key provided, authenticate immediately
+    if api_key:
+        user = get_user_from_api_key(api_key)
+        if not user:
+            await websocket.close(code=4001, reason="Invalid API key")
+            return
+        agent = DesktopAgent(websocket=websocket, user_id=user.user_id)
+        desktop_agents[user.user_id] = agent
+        print(f"[Agent] Connected (authenticated): {user.user_id[:8]}...")
+    else:
+        # Create pending agent, wait for registration message
+        agent = DesktopAgent(websocket=websocket)
+        print("[Agent] Connected (awaiting registration)...")
 
     try:
         while True:
@@ -1516,22 +1564,53 @@ async def agent_websocket(websocket: WebSocket, api_key: str):
             if message["type"] == "websocket.disconnect":
                 break
 
-            # Forward to web client
-            if agent.mobile_client:
+            if "text" not in message:
+                continue
+
+            try:
+                data = json.loads(message["text"])
+            except:
+                continue
+
+            # Handle registration from agents with pairing codes
+            if data.get("type") == "register" and not agent.user_id:
+                pairing_code = data.get("pairing_code", "").upper().strip()
+                agent_id = data.get("agent_id")
+                system_info = data.get("system_info", {})
+
+                if pairing_code:
+                    agent.pairing_code = pairing_code
+                    agent.agent_id = agent_id
+                    pending_agents[pairing_code] = agent
+                    print(f"[Agent] Registered with code: {pairing_code}")
+
+                    await websocket.send_json({
+                        "type": "registered",
+                        "message": "Waiting for user to enter pairing code on vibewithgary.com"
+                    })
+                continue
+
+            # Handle pong responses
+            if data.get("type") == "pong":
+                continue
+
+            # Forward execution results to web client
+            if agent.mobile_client and agent.user_id:
                 try:
-                    if "text" in message:
-                        await agent.mobile_client.send_text(message["text"])
-                    elif "bytes" in message:
-                        await agent.mobile_client.send_bytes(message["bytes"])
+                    await agent.mobile_client.send_text(message["text"])
                 except:
                     agent.mobile_client = None
 
     except WebSocketDisconnect:
         pass
     finally:
-        if user.user_id in desktop_agents:
-            del desktop_agents[user.user_id]
-        print(f"[Agent] Disconnected: {user.user_id[:8]}...")
+        # Clean up
+        if agent.user_id and agent.user_id in desktop_agents:
+            del desktop_agents[agent.user_id]
+            print(f"[Agent] Disconnected: {agent.user_id[:8]}...")
+        elif pairing_code and pairing_code in pending_agents:
+            del pending_agents[pairing_code]
+            print(f"[Agent] Disconnected (unpaired): {pairing_code}")
 
 
 @app.websocket("/ws/client")
