@@ -32,12 +32,22 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Operations that require user approval
 DANGEROUS_OPERATIONS = {
-    "write_file": "Write to file",
-    "edit_file": "Edit file",
-    "delete_file": "Delete file",
-    "bash": "Run shell command",
-    "execute": "Execute code"
+    "write_file": "📝 Write file",
+    "edit_file": "✏️  Edit file",
+    "delete_file": "🗑️  Delete file",
+    "bash": "🖥️  Run command",
+    "execute": "▶️  Execute code"
 }
+
+# ANSI color codes
+class Colors:
+    YELLOW = "\033[93m"
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RESET = "\033[0m"
 
 
 class GaryAgent:
@@ -49,6 +59,7 @@ class GaryAgent:
         self.cwd = Path.home()  # Current working directory
         self.pending_approvals = {}  # request_id -> operation details
         self.auto_approve = False  # Set to True to skip approval prompts
+        self.trust_session = False  # Trust all operations for this session
         self.load_config()
 
     def load_config(self):
@@ -103,6 +114,93 @@ class GaryAgent:
         if not p.is_absolute():
             p = self.cwd / p
         return p.resolve()
+
+    # =========================================================================
+    # Approval Flow
+    # =========================================================================
+
+    def format_operation_details(self, op_type: str, message: dict) -> str:
+        """Format operation details for display."""
+        c = Colors
+        lines = []
+
+        if op_type == "write_file":
+            path = message.get("path", "")
+            content = message.get("content", "")
+            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
+            # Show preview of content
+            preview_lines = content.split('\n')[:10]
+            if len(preview_lines) > 0:
+                lines.append(f"{c.CYAN}Content:{c.RESET}")
+                for line in preview_lines:
+                    lines.append(f"  {c.DIM}{line[:80]}{c.RESET}")
+                if len(content.split('\n')) > 10:
+                    lines.append(f"  {c.DIM}... ({len(content.split(chr(10)))} total lines){c.RESET}")
+
+        elif op_type == "edit_file":
+            path = message.get("path", "")
+            old = message.get("old_string", "")[:100]
+            new = message.get("new_string", "")[:100]
+            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
+            lines.append(f"{c.RED}- {old}{'...' if len(message.get('old_string', '')) > 100 else ''}{c.RESET}")
+            lines.append(f"{c.GREEN}+ {new}{'...' if len(message.get('new_string', '')) > 100 else ''}{c.RESET}")
+
+        elif op_type == "delete_file":
+            path = message.get("path", "")
+            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
+
+        elif op_type == "bash":
+            cmd = message.get("command", "")
+            lines.append(f"{c.CYAN}Command:{c.RESET} {cmd}")
+            lines.append(f"{c.CYAN}Working Dir:{c.RESET} {self.cwd}")
+
+        elif op_type == "execute":
+            lang = message.get("language", "python")
+            code = message.get("code", "")
+            lines.append(f"{c.CYAN}Language:{c.RESET} {lang}")
+            lines.append(f"{c.CYAN}Code:{c.RESET}")
+            for line in code.split('\n')[:10]:
+                lines.append(f"  {c.DIM}{line[:80]}{c.RESET}")
+            if len(code.split('\n')) > 10:
+                lines.append(f"  {c.DIM}... ({len(code.split(chr(10)))} total lines){c.RESET}")
+
+        return '\n'.join(lines)
+
+    async def prompt_approval(self, op_type: str, message: dict) -> bool:
+        """Prompt user for approval of dangerous operation."""
+        if self.auto_approve or self.trust_session:
+            return True
+
+        c = Colors
+        op_name = DANGEROUS_OPERATIONS.get(op_type, op_type)
+
+        print(f"\n{c.YELLOW}{'─' * 60}{c.RESET}")
+        print(f"{c.YELLOW}{c.BOLD}  ⚠️  APPROVAL REQUIRED: {op_name}{c.RESET}")
+        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
+        print()
+        print(self.format_operation_details(op_type, message))
+        print()
+        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
+        print(f"  {c.GREEN}[y]{c.RESET} Approve  {c.GREEN}[a]{c.RESET} Approve all (this session)  {c.RED}[n]{c.RESET} Deny")
+        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
+
+        # Use asyncio to handle input without blocking the event loop
+        loop = asyncio.get_event_loop()
+        try:
+            response = await loop.run_in_executor(None, lambda: input(f"  {c.BOLD}Choose [y/a/n]: {c.RESET}").strip().lower())
+        except EOFError:
+            response = 'n'
+
+        if response == 'a':
+            self.trust_session = True
+            print(f"  {c.GREEN}✓ Approved all operations for this session{c.RESET}")
+            return True
+        elif response == 'y':
+            print(f"  {c.GREEN}✓ Approved{c.RESET}")
+            return True
+        else:
+            print(f"  {c.RED}✗ Denied{c.RESET}")
+            return False
 
     # =========================================================================
     # File Operations
@@ -457,32 +555,38 @@ class GaryAgent:
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "write_file":
-            print(f"\n  → Writing: {message.get('path')}")
-            result = await self.write_file(
-                message.get("path", ""),
-                message.get("content", "")
-            )
-            status = "✓" if result["success"] else "✗"
-            print(f"  {status} Write {'completed' if result['success'] else 'failed'}")
+            if await self.prompt_approval(msg_type, message):
+                result = await self.write_file(
+                    message.get("path", ""),
+                    message.get("content", "")
+                )
+                status = "✓" if result["success"] else "✗"
+                print(f"  {status} Write {'completed' if result['success'] else 'failed'}")
+            else:
+                result = {"success": False, "error": "Operation denied by user"}
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "edit_file":
-            print(f"\n  → Editing: {message.get('path')}")
-            result = await self.edit_file(
-                message.get("path", ""),
-                message.get("old_string", ""),
-                message.get("new_string", ""),
-                message.get("replace_all", False)
-            )
-            status = "✓" if result["success"] else "✗"
-            print(f"  {status} Edit {'completed' if result['success'] else 'failed'}")
+            if await self.prompt_approval(msg_type, message):
+                result = await self.edit_file(
+                    message.get("path", ""),
+                    message.get("old_string", ""),
+                    message.get("new_string", ""),
+                    message.get("replace_all", False)
+                )
+                status = "✓" if result["success"] else "✗"
+                print(f"  {status} Edit {'completed' if result['success'] else 'failed'}")
+            else:
+                result = {"success": False, "error": "Operation denied by user"}
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "delete_file":
-            print(f"\n  → Deleting: {message.get('path')}")
-            result = await self.delete_file(message.get("path", ""))
-            status = "✓" if result["success"] else "✗"
-            print(f"  {status} Delete {'completed' if result['success'] else 'failed'}")
+            if await self.prompt_approval(msg_type, message):
+                result = await self.delete_file(message.get("path", ""))
+                status = "✓" if result["success"] else "✗"
+                print(f"  {status} Delete {'completed' if result['success'] else 'failed'}")
+            else:
+                result = {"success": False, "error": "Operation denied by user"}
             await self.send_result(request_id, msg_type, result)
 
         # Directory operations
@@ -513,20 +617,24 @@ class GaryAgent:
 
         # Shell/code execution
         elif msg_type == "bash":
-            cmd = message.get("command", "")
-            print(f"\n  → Running: {cmd[:50]}{'...' if len(cmd) > 50 else ''}")
-            result = await self.run_bash(cmd, message.get("timeout", 120))
-            status = "✓" if result["success"] else "✗"
-            print(f"  {status} Command {'completed' if result['success'] else 'failed'} ({result.get('duration_ms', 0)}ms)")
+            if await self.prompt_approval(msg_type, message):
+                cmd = message.get("command", "")
+                result = await self.run_bash(cmd, message.get("timeout", 120))
+                status = "✓" if result["success"] else "✗"
+                print(f"  {status} Command {'completed' if result['success'] else 'failed'} ({result.get('duration_ms', 0)}ms)")
+            else:
+                result = {"success": False, "error": "Operation denied by user"}
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "execute":
-            code = message.get("code", "")
-            language = message.get("language", "python")
-            print(f"\n  → Executing {language} code...")
-            result = await self.execute_code(code, language)
-            status = "✓" if result["success"] else "✗"
-            print(f"  {status} Execution {'completed' if result['success'] else 'failed'} ({result['duration_ms']}ms)")
+            if await self.prompt_approval(msg_type, message):
+                code = message.get("code", "")
+                language = message.get("language", "python")
+                result = await self.execute_code(code, language)
+                status = "✓" if result["success"] else "✗"
+                print(f"  {status} Execution {'completed' if result['success'] else 'failed'} ({result['duration_ms']}ms)")
+            else:
+                result = {"success": False, "error": "Operation denied by user", "stdout": "", "stderr": "Operation denied by user", "exit_code": -1}
             await self.send_result(request_id, "execution_result", result)
 
     async def send_result(self, request_id: str, operation: str, result: dict):
@@ -546,6 +654,14 @@ class GaryAgent:
             self.pairing_code = self.generate_pairing_code()
             self.save_config()
 
+        # Determine approval mode status
+        if self.auto_approve:
+            approval_status = "⚠️  AUTO-APPROVE (no prompts)"
+        elif self.trust_session:
+            approval_status = "⚠️  TRUSTED SESSION"
+        else:
+            approval_status = "✓  Approval required for writes"
+
         print(f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
@@ -564,6 +680,7 @@ class GaryAgent:
 ║                                                              ║
 ║   Capabilities: read, write, edit, search, bash, execute     ║
 ║   Working Dir:  {str(self.cwd)[:40]:<40} ║
+║   Security:     {approval_status:<40} ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
         """)
@@ -627,6 +744,8 @@ def main():
     parser.add_argument("--reset", action="store_true", help="Reset pairing code")
     parser.add_argument("--version", action="store_true", help="Show version")
     parser.add_argument("--cwd", type=str, help="Set initial working directory")
+    parser.add_argument("--auto-approve", action="store_true", help="Auto-approve all operations (use with caution)")
+    parser.add_argument("--trust", action="store_true", help="Trust all operations for this session")
     args = parser.parse_args()
 
     if args.version:
@@ -643,6 +762,14 @@ def main():
     if args.cwd:
         agent.cwd = Path(args.cwd).expanduser().resolve()
         print(f"Working directory set to: {agent.cwd}")
+
+    if args.auto_approve:
+        agent.auto_approve = True
+        print(f"{Colors.YELLOW}⚠️  Auto-approve mode: All operations will be executed without confirmation{Colors.RESET}")
+
+    if args.trust:
+        agent.trust_session = True
+        print(f"{Colors.YELLOW}⚠️  Trust mode: All operations will be approved for this session{Colors.RESET}")
 
     agent.run()
 
