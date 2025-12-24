@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Vibe With Gary</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Landing Screen -->
+    <div id="landingScreen" class="landing-screen">
+        <div class="landing-content">
+            <img src="gary-logo.svg" alt="Gary" class="landing-logo">
+            <h1 class="landing-title">Bro, Let's Code</h1>
+            <button class="dig-it-btn" onclick="loginWithGitHub()">Dig it</button>
+        </div>
+    </div>
+
+    <!-- Onboarding Screen -->
+    <div id="onboardingScreen" class="onboarding-screen hidden">
+        <div class="onboarding-content">
+            <h2>How do we connect?</h2>
+            <p class="onboarding-subtitle">Start a Project on Your Desktop or in the Cloud</p>
+
+            <div class="gary-cat-animation">
+                <img src="GaryCat.svg" alt="Gary and Cat" class="gary-cat-img">
+            </div>
+
+            <p class="cat-tagline">We'll have a Cat (GitHub) backing us up all the way.</p>
+
+            <div class="onboarding-options">
+                <div class="onboarding-option" onclick="showConnectModal()">
+                    <div class="option-icon">🖥️</div>
+                    <h3>Desktop Agent</h3>
+                    <p>Run Gary on your machine with full access to your code</p>
+                </div>
+                <div class="onboarding-option" onclick="loginWithGitHub()">
+                    <div class="option-icon">☁️</div>
+                    <h3>Cloud with GitHub</h3>
+                    <p>Connect your repos and code from anywhere</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="hidden">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <img src="gary-logo.svg" alt="Gary" class="logo-img">
+                    <span class="logo-text">Gary</span>
+                </div>
+                <button class="new-chat-btn" onclick="newSession()">+ New Chat</button>
+            </div>
+
+            <div class="sessions-list" id="sessionsList">
+                <!-- Sessions populated by JS -->
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="user-info" id="userInfo">
+                    <img class="avatar" src="" alt="" id="userAvatar">
+                    <span class="username" id="userName">Not logged in</span>
+                </div>
+                <button class="settings-btn" onclick="openSettings()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m17.66-5.66l-4.24 4.24m-6.84 0L3.34 6.34m0 11.32l4.24-4.24m6.84 0l4.24 4.24"></path>
+                    </svg>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <!-- Bro Level Slider -->
+            <div class="bro-slider-container">
+                <span class="bro-label top">Max Bro</span>
+                <input type="range" min="0" max="100" value="100" class="bro-slider" id="broSlider" orient="vertical" oninput="updateBroLevel(this.value)">
+                <span class="bro-label bottom">No Bro</span>
+            </div>
+            <!-- Connection Status Bar -->
+            <div class="status-bar" id="statusBar">
+                <span class="status-dot" id="statusDot"></span>
+                <span class="status-text" id="statusText">Connecting...</span>
+                <button class="connect-btn" id="connectBtn" onclick="showConnectModal()">Connect Agent</button>
+            </div>
+
+            <!-- Project Header -->
+            <div class="project-header" id="projectHeader">
+                <select class="project-select" id="projectSelect" onchange="switchProject()">
+                    <option value="">Select a project...</option>
+                </select>
+                <div class="header-actions">
+                    <button class="header-btn run-local" onclick="runCodeLocally()">
+                        <span class="btn-icon">🖥️</span> Run Locally
+                    </button>
+                    <button class="header-btn run-virtual" onclick="runCodeVirtually()">
+                        <span class="btn-icon">☁️</span> Run Virtually
+                    </button>
+                </div>
+            </div>
+
+            <!-- Messages Container -->
+            <div class="messages-container" id="messagesContainer">
+                <div class="welcome-message" id="welcomeMessage">
+                    <img src="gary-logo.svg" alt="Gary" class="welcome-logo">
+                    <h1>Bro, Let's Code</h1>
+                    <p>Yo, I'm Gary. Your AI coding homie. What are we vibin' on today?</p>
+                    <div class="quick-actions">
+                        <button class="quick-action" onclick="sendQuickAction('Help me understand this codebase')">
+                            Explore the codebase, man
+                        </button>
+                        <button class="quick-action" onclick="sendQuickAction('What can you help me with?')">
+                            What's your deal, dude?
+                        </button>
+                        <button class="quick-action" onclick="sendQuickAction('Let\\'s build something sick')">
+                            Let's build something sick
+                        </button>
+                    </div>
+                </div>
+
+                <div class="messages" id="messages">
+                    <!-- Messages populated by JS -->
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea
+                        id="messageInput"
+                        placeholder="What's good, man..."
+                        rows="1"
+                        onkeydown="handleKeyDown(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span class="hint">Press Enter to send, Shift+Enter for new line</span>
+                </div>
+            </div>
+        </main>
+
+    </div>
+
+    <!-- Connect Modal (outside app for visibility from onboarding) -->
+    <div class="modal" id="connectModal">
+        <div class="modal-content">
+            <h2>Connect to Gary</h2>
+            <p>Enter the pairing code from your desktop agent, dude:</p>
+            <input type="text" class="pairing-input" id="pairingInput" placeholder="000000" maxlength="6" inputmode="numeric">
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeConnectModal()">Cancel</button>
+                <button class="btn-primary" onclick="connectWithCode()">Connect</button>
+            </div>
+            <div class="modal-divider">or</div>
+            <button class="btn-github" onclick="loginWithGitHub()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+                Login with GitHub
+            </button>
+        </div>
+    </div>
+
+    <!-- Approval Modal -->
+    <div class="modal" id="approvalModal">
+        <div class="modal-content approval-content">
+            <h2>Gary wants to:</h2>
+            <div class="approval-action" id="approvalAction"></div>
+            <div class="approval-details" id="approvalDetails"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="rejectAction()">Reject</button>
+                <button class="btn-primary" onclick="approveAction()">Approve</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

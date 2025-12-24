@@ -1,0 +1,123 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Create DMG
+        run: |
+          # Create a simple DMG
+          mkdir -p dmg_contents
+          cp dist/GaryAgent-mac dmg_contents/GaryAgent
+          chmod +x dmg_contents/GaryAgent
+          hdiutil create -volname "Gary Agent" -srcfolder dmg_contents -ov -format UDZO dist/GaryAgent-mac.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GaryAgent-mac
+          path: dist/GaryAgent-mac.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GaryAgent-win
+          path: dist/GaryAgent-win.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Make executable
+        run: chmod +x dist/GaryAgent-linux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GaryAgent-linux
+          path: dist/GaryAgent-linux
+
+  release:
+    needs: [build-mac, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/GaryAgent-mac/GaryAgent-mac.dmg
+            artifacts/GaryAgent-win/GaryAgent-win.exe
+            artifacts/GaryAgent-linux/GaryAgent-linux
+          body: |
+            ## Gary Agent ${{ github.ref_name }}
+            
+            Download for your platform:
+            - **macOS**: GaryAgent-mac.dmg
+            - **Windows**: GaryAgent-win.exe
+            - **Linux**: GaryAgent-linux
+            
+            ### Installation
+            1. Download the file for your OS
+            2. Run the agent
+            3. Enter the pairing code at vibewithgary.com
+            
+            ### What's New
+            See CHANGELOG.md for details.
