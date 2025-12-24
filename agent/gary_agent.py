@@ -719,12 +719,42 @@ class GaryAgent:
                         "system_info": self.get_system_info()
                     }))
 
-                    async for message in ws:
-                        try:
-                            data = json.loads(message)
-                            await self.handle_message(data)
-                        except json.JSONDecodeError:
-                            print(f"  Invalid message received")
+                    # Start message receiver and processor concurrently
+                    message_queue = asyncio.Queue()
+
+                    async def receive_messages():
+                        """Receive messages and put them in queue."""
+                        async for message in ws:
+                            try:
+                                data = json.loads(message)
+                                await message_queue.put(data)
+                            except json.JSONDecodeError:
+                                print(f"  Invalid message received")
+
+                    async def process_messages():
+                        """Process messages from queue."""
+                        while True:
+                            data = await message_queue.get()
+                            msg_type = data.get("type")
+
+                            # Handle approval_response immediately (don't block)
+                            if msg_type == "approval_response":
+                                approval_id = data.get("approval_id")
+                                approved = data.get("approved", False)
+                                trust = data.get("trust", False)
+
+                                if approval_id in self.pending_approvals:
+                                    self.pending_approvals[f"{approval_id}_result"] = "trust" if trust else approved
+                                    self.pending_approvals[approval_id].set()
+                            else:
+                                # Create task for other handlers so they don't block
+                                asyncio.create_task(self.handle_message(data))
+
+                    # Run both concurrently - when receiver ends, we're done
+                    await asyncio.gather(
+                        receive_messages(),
+                        process_messages()
+                    )
 
             except websockets.exceptions.ConnectionClosed:
                 print("  Connection closed. Reconnecting...")
