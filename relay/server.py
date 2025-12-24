@@ -711,6 +711,21 @@ Your code blocks have a "Run" button that executes code on the user's machine (i
 - The user can click "Run" to execute directly - no need to tell them to open a terminal
 - If they ask to create folders, files, or run commands, just provide the code with proper language annotation
 
+LOCAL AGENT CAPABILITIES (when user has gary_agent running):
+The local agent provides Claude Code-like capabilities for full system access:
+- READ FILES: Read any file on their system
+- WRITE FILES: Create or overwrite files
+- EDIT FILES: Make precise edits to existing files
+- SEARCH: Find files (glob) and search content (grep)
+- BASH: Run any shell command with persistent working directory
+- NAVIGATE: Change directories, list contents
+
+When the user has the local agent connected, you can help them:
+- Build entire projects with multiple files
+- Read and modify their existing code
+- Run builds, tests, and deployments
+- Navigate and explore their codebase
+
 FOR NEW USERS:
 Welcome them warmly! Ask what they want to build or learn.
 If they ask "how do I code here", explain they can just ask coding questions and click "Run" on any code you provide.
@@ -719,6 +734,7 @@ FOR POWER USERS who want local access:
 Download the agent: curl -O https://raw.githubusercontent.com/jaaronleesanderson/vibewithgary/main/agent/gary_agent.py
 Run it: python3 gary_agent.py
 Enter the pairing code on the website to connect.
+This gives you full file system access like Claude Code!
 """
 
 class GaryChat:
@@ -1602,17 +1618,65 @@ async def agent_websocket(websocket: WebSocket, api_key: str = None):
             if data.get("type") == "pong":
                 continue
 
-            # Handle execution results from agent
-            if data.get("type") == "execution_result" and agent.mobile_client:
+            # Handle all result messages from agent
+            msg_type = data.get("type", "")
+            if msg_type.endswith("_result") and agent.mobile_client:
                 result = data.get("result", {})
-                try:
-                    await agent.mobile_client.send_json({
+                request_id = data.get("request_id")
+
+                # Format response based on result type
+                if msg_type == "execution_result":
+                    response = {
                         "type": "code_output",
+                        "request_id": request_id,
                         "output": result.get("stdout", "") + result.get("stderr", ""),
                         "exit_code": result.get("exit_code", 1),
                         "mode": "local",
                         "duration_ms": result.get("duration_ms", 0)
-                    })
+                    }
+                elif msg_type == "bash_result":
+                    response = {
+                        "type": "bash_output",
+                        "request_id": request_id,
+                        "output": result.get("stdout", "") + result.get("stderr", ""),
+                        "exit_code": result.get("exit_code", 1),
+                        "cwd": result.get("cwd"),
+                        "duration_ms": result.get("duration_ms", 0)
+                    }
+                elif msg_type == "read_file_result":
+                    response = {
+                        "type": "file_content",
+                        "request_id": request_id,
+                        "content": result.get("content", ""),
+                        "path": result.get("path"),
+                        "total_lines": result.get("total_lines", 0),
+                        "success": result.get("success", False),
+                        "error": result.get("error")
+                    }
+                elif msg_type in ["write_file_result", "edit_file_result", "delete_file_result"]:
+                    response = {
+                        "type": "file_operation",
+                        "request_id": request_id,
+                        "operation": msg_type.replace("_result", ""),
+                        "path": result.get("path"),
+                        "success": result.get("success", False),
+                        "error": result.get("error")
+                    }
+                elif msg_type in ["glob_result", "grep_result", "list_dir_result"]:
+                    response = {
+                        "type": "search_result",
+                        "request_id": request_id,
+                        "operation": msg_type.replace("_result", ""),
+                        "results": result.get("matches") or result.get("results") or result.get("entries"),
+                        "success": result.get("success", False),
+                        "error": result.get("error")
+                    }
+                else:
+                    # Generic passthrough
+                    response = {"type": msg_type, "request_id": request_id, "result": result}
+
+                try:
+                    await agent.mobile_client.send_json(response)
                 except:
                     agent.mobile_client = None
                 continue
@@ -1802,6 +1866,30 @@ async def client_websocket(websocket: WebSocket, token: str):
                     await websocket.send_json({
                         "type": "code_error",
                         "error": "No desktop agent connected for local execution. Click 'Run Locally' to install the Gary Agent."
+                    })
+                continue
+
+            # Handle file operations - forward to agent
+            file_ops = ["read_file", "write_file", "edit_file", "delete_file", "list_dir", "glob", "grep", "bash", "cd"]
+            if data.get("type") in file_ops:
+                current_agent = desktop_agents.get(user.user_id)
+                if current_agent:
+                    current_agent.mobile_client = websocket
+                    request_id = secrets.token_urlsafe(16)
+                    try:
+                        # Forward the message to the agent
+                        msg = dict(data)
+                        msg["request_id"] = request_id
+                        await current_agent.websocket.send_json(msg)
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "error": f"Failed to send to agent: {e}"
+                        })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "No desktop agent connected. Please connect your local agent first."
                     })
                 continue
 
