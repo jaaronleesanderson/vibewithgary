@@ -212,7 +212,7 @@ class GaryAgent:
 
                 async with websockets.connect(
                     RELAY_URL,
-                    extra_headers={
+                    additional_headers={
                         "X-Agent-ID": self.agent_id,
                         "X-Pairing-Code": self.pairing_code
                     }
