@@ -1289,6 +1289,35 @@ async function fetchUserInfo() {
     }
 }
 
+async function checkAgentStatus() {
+    const token = localStorage.getItem('gary_session_token');
+    if (!token) return;
+
+    try {
+        const resp = await fetch(`${API_URL}/api/status`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (resp.ok) {
+            const status = await resp.json();
+            hasDesktopAgent = status.desktop_connected;
+            console.log('[Gary] Agent status:', hasDesktopAgent ? 'connected' : 'not connected');
+            updateAgentStatusUI();
+        }
+    } catch (e) {
+        console.error('Failed to check agent status:', e);
+    }
+}
+
+function updateAgentStatusUI() {
+    const connectBtn = document.getElementById('connectBtn');
+    const statusText = document.getElementById('statusText');
+
+    if (hasDesktopAgent) {
+        if (connectBtn) connectBtn.style.display = 'none';
+        if (statusText) statusText.textContent = 'Local Agent Connected';
+    }
+}
+
 function updateUserDisplay() {
     const avatar = document.getElementById('userAvatar');
     const userName = document.getElementById('userName');
@@ -1432,6 +1461,7 @@ document.addEventListener('DOMContentLoaded', () => {
             connect(tokenFromUrl);
             fetchProjects();
             fetchUserInfo();
+            checkAgentStatus();
             setTimeout(() => showConnectModal(), 500);
         } else {
             // Default: connect directly (Gary chat on server)
@@ -1440,6 +1470,7 @@ document.addEventListener('DOMContentLoaded', () => {
             connect(tokenFromUrl);
             fetchProjects();
             fetchUserInfo();
+            checkAgentStatus();
         }
     } else {
         // Check if already has a token (returning user)
@@ -1451,6 +1482,7 @@ document.addEventListener('DOMContentLoaded', () => {
             connect(savedToken);
             fetchProjects();
             fetchUserInfo();
+            checkAgentStatus();
         }
         // Otherwise show landing screen (default)
     }
