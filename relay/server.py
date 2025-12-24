@@ -1594,7 +1594,22 @@ async def agent_websocket(websocket: WebSocket, api_key: str = None):
             if data.get("type") == "pong":
                 continue
 
-            # Forward execution results to web client
+            # Handle execution results from agent
+            if data.get("type") == "execution_result" and agent.mobile_client:
+                result = data.get("result", {})
+                try:
+                    await agent.mobile_client.send_json({
+                        "type": "code_output",
+                        "output": result.get("stdout", "") + result.get("stderr", ""),
+                        "exit_code": result.get("exit_code", 1),
+                        "mode": "local",
+                        "duration_ms": result.get("duration_ms", 0)
+                    })
+                except:
+                    agent.mobile_client = None
+                continue
+
+            # Forward other messages to web client
             if agent.mobile_client and agent.user_id:
                 try:
                     await agent.mobile_client.send_text(message["text"])
@@ -1717,13 +1732,20 @@ async def client_websocket(websocket: WebSocket, token: str):
                     )
                     conn.commit()
 
-                if mode == "local" and agent:
+                # Look up agent dynamically (may have been paired after connection)
+                current_agent = desktop_agents.get(user.user_id)
+
+                if mode == "local" and current_agent:
+                    # Link this client to the agent for receiving results
+                    current_agent.mobile_client = websocket
+
                     # Forward to desktop agent
                     try:
-                        await agent.websocket.send_json({
-                            "type": "run_code",
+                        await current_agent.websocket.send_json({
+                            "type": "execute",
                             "code": code,
-                            "log_id": log_id
+                            "language": data.get("language", "python"),
+                            "request_id": log_id
                         })
                         # Agent will send result back, we'll update usage log then
                     except Exception as e:
