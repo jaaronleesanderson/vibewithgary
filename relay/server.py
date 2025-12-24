@@ -1618,8 +1618,21 @@ async def agent_websocket(websocket: WebSocket, api_key: str = None):
             if data.get("type") == "pong":
                 continue
 
-            # Handle all result messages from agent
+            # Handle approval requests from agent - forward to web client
             msg_type = data.get("type", "")
+            if msg_type == "approval_request" and agent.mobile_client:
+                try:
+                    await agent.mobile_client.send_json({
+                        "type": "approval_request",
+                        "approval_id": data.get("approval_id"),
+                        "request_id": data.get("request_id"),
+                        "details": data.get("details", {})
+                    })
+                except:
+                    agent.mobile_client = None
+                continue
+
+            # Handle all result messages from agent
             if msg_type.endswith("_result") and agent.mobile_client:
                 result = data.get("result", {})
                 request_id = data.get("request_id")
@@ -1867,6 +1880,21 @@ async def client_websocket(websocket: WebSocket, token: str):
                         "type": "code_error",
                         "error": "No desktop agent connected for local execution. Click 'Run Locally' to install the Gary Agent."
                     })
+                continue
+
+            # Handle approval responses from web client - forward to agent
+            if data.get("type") == "approval_response":
+                current_agent = desktop_agents.get(user.user_id)
+                if current_agent:
+                    try:
+                        await current_agent.websocket.send_json({
+                            "type": "approval_response",
+                            "approval_id": data.get("approval_id"),
+                            "approved": data.get("approved", False),
+                            "trust": data.get("trust", False)
+                        })
+                    except:
+                        pass
                 continue
 
             # Handle file operations - forward to agent

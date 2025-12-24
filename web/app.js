@@ -108,6 +108,9 @@ function handleMessage(data) {
         case 'approval_required':
             showApprovalModal(data);
             break;
+        case 'approval_request':
+            showAgentApprovalModal(data);
+            break;
         case 'file_change':
             showFileChange(data);
             break;
@@ -925,6 +928,139 @@ function rejectAction() {
 function closeApprovalModal() {
     document.getElementById('approvalModal').classList.remove('active');
     pendingApproval = null;
+}
+
+// =============================================================================
+// Agent Approval Modal (for remote approvals from desktop agent)
+// =============================================================================
+
+let pendingAgentApproval = null;
+
+function showAgentApprovalModal(data) {
+    pendingAgentApproval = data;
+    const details = data.details || {};
+
+    // Create modal if it doesn't exist
+    let modal = document.getElementById('agentApprovalModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'agentApprovalModal';
+        modal.className = 'modal';
+        document.body.appendChild(modal);
+    }
+
+    // Format the details based on operation type
+    let detailsHtml = '';
+    const op = details.operation;
+
+    if (op === 'write_file' || op === 'edit_file' || op === 'delete_file') {
+        detailsHtml = `<div class="approval-detail"><strong>Path:</strong> ${escapeHtml(details.path || '')}</div>`;
+    }
+
+    if (op === 'write_file' && details.preview) {
+        detailsHtml += `
+            <div class="approval-detail">
+                <strong>Content:</strong> (${details.total_lines || 0} lines)
+                <pre class="approval-preview">${escapeHtml(details.preview)}</pre>
+            </div>`;
+    }
+
+    if (op === 'edit_file') {
+        detailsHtml += `
+            <div class="approval-detail">
+                <strong>Replace:</strong>
+                <pre class="approval-preview approval-remove">${escapeHtml(details.old_string || '')}</pre>
+            </div>
+            <div class="approval-detail">
+                <strong>With:</strong>
+                <pre class="approval-preview approval-add">${escapeHtml(details.new_string || '')}</pre>
+            </div>`;
+    }
+
+    if (op === 'bash') {
+        detailsHtml = `
+            <div class="approval-detail"><strong>Command:</strong></div>
+            <pre class="approval-preview">${escapeHtml(details.command || '')}</pre>
+            <div class="approval-detail"><strong>Working Dir:</strong> ${escapeHtml(details.cwd || '')}</div>`;
+    }
+
+    if (op === 'execute') {
+        detailsHtml = `
+            <div class="approval-detail"><strong>Language:</strong> ${escapeHtml(details.language || '')}</div>
+            <div class="approval-detail">
+                <strong>Code:</strong> (${details.total_lines || 0} lines)
+                <pre class="approval-preview">${escapeHtml(details.preview || '')}</pre>
+            </div>`;
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content agent-approval-modal">
+            <div class="modal-header approval-header">
+                <span class="approval-icon">⚠️</span>
+                <h3>Approval Required</h3>
+            </div>
+            <div class="modal-body">
+                <div class="approval-operation">${escapeHtml(details.operation_name || details.operation || 'Unknown operation')}</div>
+                ${detailsHtml}
+            </div>
+            <div class="modal-footer approval-actions">
+                <button class="btn btn-danger" onclick="rejectAgentAction()">Deny</button>
+                <button class="btn btn-secondary" onclick="trustAgentSession()">Trust Session</button>
+                <button class="btn btn-primary" onclick="approveAgentAction()">Approve</button>
+            </div>
+        </div>
+    `;
+
+    modal.classList.add('active');
+
+    // Play notification sound or vibrate
+    if ('vibrate' in navigator) {
+        navigator.vibrate(200);
+    }
+}
+
+function approveAgentAction() {
+    if (pendingAgentApproval && ws) {
+        ws.send(JSON.stringify({
+            type: 'approval_response',
+            approval_id: pendingAgentApproval.approval_id,
+            approved: true,
+            trust: false
+        }));
+    }
+    closeAgentApprovalModal();
+}
+
+function trustAgentSession() {
+    if (pendingAgentApproval && ws) {
+        ws.send(JSON.stringify({
+            type: 'approval_response',
+            approval_id: pendingAgentApproval.approval_id,
+            approved: true,
+            trust: true
+        }));
+    }
+    closeAgentApprovalModal();
+}
+
+function rejectAgentAction() {
+    if (pendingAgentApproval && ws) {
+        ws.send(JSON.stringify({
+            type: 'approval_response',
+            approval_id: pendingAgentApproval.approval_id,
+            approved: false,
+            trust: false
+        }));
+    }
+    closeAgentApprovalModal();
+}
+
+function closeAgentApprovalModal() {
+    const modal = document.getElementById('agentApprovalModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+    pendingAgentApproval = null;
 }
 
 // =============================================================================

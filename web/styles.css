@@ -1593,3 +1593,96 @@ body {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
+
+/* Agent Approval Modal */
+.agent-approval-modal {
+    max-width: 500px;
+}
+
+.approval-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.approval-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.approval-icon {
+    font-size: 28px;
+}
+
+.approval-operation {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.approval-detail {
+    margin-bottom: 12px;
+    font-size: 14px;
+}
+
+.approval-detail strong {
+    color: var(--text-secondary);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.approval-preview {
+    background: var(--bg-tertiary);
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-top: 4px;
+}
+
+.approval-remove {
+    border-left: 3px solid #f87171;
+}
+
+.approval-add {
+    border-left: 3px solid #4ade80;
+}
+
+.approval-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.approval-actions .btn {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-danger {
+    background: transparent;
+    border: 1px solid #f87171;
+    color: #f87171;
+}
+
+.btn-danger:hover {
+    background: #f87171;
+    color: white;
+}

@@ -119,88 +119,86 @@ class GaryAgent:
     # Approval Flow
     # =========================================================================
 
-    def format_operation_details(self, op_type: str, message: dict) -> str:
-        """Format operation details for display."""
-        c = Colors
-        lines = []
+    def format_operation_summary(self, op_type: str, message: dict) -> dict:
+        """Format operation details for sending to web UI."""
+        summary = {
+            "operation": op_type,
+            "operation_name": DANGEROUS_OPERATIONS.get(op_type, op_type),
+        }
 
         if op_type == "write_file":
-            path = message.get("path", "")
             content = message.get("content", "")
-            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
-            # Show preview of content
-            preview_lines = content.split('\n')[:10]
-            if len(preview_lines) > 0:
-                lines.append(f"{c.CYAN}Content:{c.RESET}")
-                for line in preview_lines:
-                    lines.append(f"  {c.DIM}{line[:80]}{c.RESET}")
-                if len(content.split('\n')) > 10:
-                    lines.append(f"  {c.DIM}... ({len(content.split(chr(10)))} total lines){c.RESET}")
+            summary["path"] = message.get("path", "")
+            summary["preview"] = content[:500] + ("..." if len(content) > 500 else "")
+            summary["total_lines"] = len(content.split('\n'))
 
         elif op_type == "edit_file":
-            path = message.get("path", "")
-            old = message.get("old_string", "")[:100]
-            new = message.get("new_string", "")[:100]
-            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
-            lines.append(f"{c.RED}- {old}{'...' if len(message.get('old_string', '')) > 100 else ''}{c.RESET}")
-            lines.append(f"{c.GREEN}+ {new}{'...' if len(message.get('new_string', '')) > 100 else ''}{c.RESET}")
+            summary["path"] = message.get("path", "")
+            summary["old_string"] = message.get("old_string", "")[:200]
+            summary["new_string"] = message.get("new_string", "")[:200]
 
         elif op_type == "delete_file":
-            path = message.get("path", "")
-            lines.append(f"{c.CYAN}Path:{c.RESET} {path}")
+            summary["path"] = message.get("path", "")
 
         elif op_type == "bash":
-            cmd = message.get("command", "")
-            lines.append(f"{c.CYAN}Command:{c.RESET} {cmd}")
-            lines.append(f"{c.CYAN}Working Dir:{c.RESET} {self.cwd}")
+            summary["command"] = message.get("command", "")
+            summary["cwd"] = str(self.cwd)
 
         elif op_type == "execute":
-            lang = message.get("language", "python")
             code = message.get("code", "")
-            lines.append(f"{c.CYAN}Language:{c.RESET} {lang}")
-            lines.append(f"{c.CYAN}Code:{c.RESET}")
-            for line in code.split('\n')[:10]:
-                lines.append(f"  {c.DIM}{line[:80]}{c.RESET}")
-            if len(code.split('\n')) > 10:
-                lines.append(f"  {c.DIM}... ({len(code.split(chr(10)))} total lines){c.RESET}")
+            summary["language"] = message.get("language", "python")
+            summary["preview"] = code[:500] + ("..." if len(code) > 500 else "")
+            summary["total_lines"] = len(code.split('\n'))
 
-        return '\n'.join(lines)
+        return summary
 
-    async def prompt_approval(self, op_type: str, message: dict) -> bool:
-        """Prompt user for approval of dangerous operation."""
+    async def prompt_approval(self, op_type: str, message: dict, request_id: str) -> bool:
+        """Request approval from web UI for dangerous operation."""
         if self.auto_approve or self.trust_session:
             return True
 
         c = Colors
         op_name = DANGEROUS_OPERATIONS.get(op_type, op_type)
 
-        print(f"\n{c.YELLOW}{'─' * 60}{c.RESET}")
-        print(f"{c.YELLOW}{c.BOLD}  ⚠️  APPROVAL REQUIRED: {op_name}{c.RESET}")
-        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
-        print()
-        print(self.format_operation_details(op_type, message))
-        print()
-        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
-        print(f"  {c.GREEN}[y]{c.RESET} Approve  {c.GREEN}[a]{c.RESET} Approve all (this session)  {c.RED}[n]{c.RESET} Deny")
-        print(f"{c.YELLOW}{'─' * 60}{c.RESET}")
+        # Generate approval ID
+        approval_id = f"approval_{request_id}"
 
-        # Use asyncio to handle input without blocking the event loop
-        loop = asyncio.get_event_loop()
+        # Send approval request to web UI via server
+        print(f"\n{c.YELLOW}  ⏳ Waiting for approval in web UI: {op_name}{c.RESET}")
+
+        await self.websocket.send(json.dumps({
+            "type": "approval_request",
+            "approval_id": approval_id,
+            "request_id": request_id,
+            "details": self.format_operation_summary(op_type, message)
+        }))
+
+        # Store pending approval and wait for response
+        self.pending_approvals[approval_id] = asyncio.Event()
+
         try:
-            response = await loop.run_in_executor(None, lambda: input(f"  {c.BOLD}Choose [y/a/n]: {c.RESET}").strip().lower())
-        except EOFError:
-            response = 'n'
+            # Wait for approval response (timeout after 60 seconds)
+            await asyncio.wait_for(self.pending_approvals[approval_id].wait(), timeout=60.0)
+            result = self.pending_approvals.get(f"{approval_id}_result", False)
 
-        if response == 'a':
-            self.trust_session = True
-            print(f"  {c.GREEN}✓ Approved all operations for this session{c.RESET}")
-            return True
-        elif response == 'y':
-            print(f"  {c.GREEN}✓ Approved{c.RESET}")
-            return True
-        else:
-            print(f"  {c.RED}✗ Denied{c.RESET}")
+            if result == "trust":
+                self.trust_session = True
+                print(f"  {c.GREEN}✓ Approved (trusting session){c.RESET}")
+                return True
+            elif result:
+                print(f"  {c.GREEN}✓ Approved{c.RESET}")
+                return True
+            else:
+                print(f"  {c.RED}✗ Denied{c.RESET}")
+                return False
+
+        except asyncio.TimeoutError:
+            print(f"  {c.RED}✗ Approval timed out{c.RESET}")
             return False
+        finally:
+            # Clean up
+            self.pending_approvals.pop(approval_id, None)
+            self.pending_approvals.pop(f"{approval_id}_result", None)
 
     # =========================================================================
     # File Operations
@@ -545,6 +543,17 @@ class GaryAgent:
         elif msg_type == "error":
             print(f"\n  ✗ Error: {message.get('message')}")
 
+        # Handle approval responses from web UI
+        elif msg_type == "approval_response":
+            approval_id = message.get("approval_id")
+            approved = message.get("approved", False)
+            trust = message.get("trust", False)
+
+            if approval_id in self.pending_approvals:
+                # Store result and signal the waiting coroutine
+                self.pending_approvals[f"{approval_id}_result"] = "trust" if trust else approved
+                self.pending_approvals[approval_id].set()
+
         # File operations
         elif msg_type == "read_file":
             result = await self.read_file(
@@ -555,7 +564,7 @@ class GaryAgent:
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "write_file":
-            if await self.prompt_approval(msg_type, message):
+            if await self.prompt_approval(msg_type, message, request_id):
                 result = await self.write_file(
                     message.get("path", ""),
                     message.get("content", "")
@@ -567,7 +576,7 @@ class GaryAgent:
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "edit_file":
-            if await self.prompt_approval(msg_type, message):
+            if await self.prompt_approval(msg_type, message, request_id):
                 result = await self.edit_file(
                     message.get("path", ""),
                     message.get("old_string", ""),
@@ -581,7 +590,7 @@ class GaryAgent:
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "delete_file":
-            if await self.prompt_approval(msg_type, message):
+            if await self.prompt_approval(msg_type, message, request_id):
                 result = await self.delete_file(message.get("path", ""))
                 status = "✓" if result["success"] else "✗"
                 print(f"  {status} Delete {'completed' if result['success'] else 'failed'}")
@@ -617,7 +626,7 @@ class GaryAgent:
 
         # Shell/code execution
         elif msg_type == "bash":
-            if await self.prompt_approval(msg_type, message):
+            if await self.prompt_approval(msg_type, message, request_id):
                 cmd = message.get("command", "")
                 result = await self.run_bash(cmd, message.get("timeout", 120))
                 status = "✓" if result["success"] else "✗"
@@ -627,7 +636,7 @@ class GaryAgent:
             await self.send_result(request_id, msg_type, result)
 
         elif msg_type == "execute":
-            if await self.prompt_approval(msg_type, message):
+            if await self.prompt_approval(msg_type, message, request_id):
                 code = message.get("code", "")
                 language = message.get("language", "python")
                 result = await self.execute_code(code, language)
