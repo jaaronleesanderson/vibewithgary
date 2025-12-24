@@ -713,7 +713,7 @@ function showAgentInstallModal() {
                     <span class="step-num">1</span>
                     <div class="step-content">
                         <strong>Download the agent</strong>
-                        <code>curl -O https://raw.githubusercontent.com/jaaronsanderson/vibewithgary/main/agent/gary_agent.py</code>
+                        <code>curl -O https://raw.githubusercontent.com/jaaronleesanderson/vibewithgary/main/agent/gary_agent.py</code>
                     </div>
                 </div>
                 <div class="install-step">
