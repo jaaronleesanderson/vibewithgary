@@ -24,6 +24,10 @@ let currentSessionId = null;
 // WebSocket Connection
 // =============================================================================
 
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_DELAY = 2000;
+
 function connect(token) {
     sessionToken = token;
     updateStatus('connecting');
@@ -31,22 +35,33 @@ function connect(token) {
     ws = new WebSocket(`${WS_URL}/ws/client?token=${token}`);
 
     ws.onopen = () => {
+        console.log('[Gary] WebSocket connected');
         updateStatus('connected');
         localStorage.setItem('gary_session_token', token);
         closeConnectModal();
         showApp();
+        reconnectAttempts = 0; // Reset on successful connection
     };
 
     ws.onmessage = (event) => {
         handleMessage(JSON.parse(event.data));
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+        console.log('[Gary] WebSocket closed:', event.code, event.reason);
         updateStatus('disconnected');
         ws = null;
+
+        // Auto-reconnect if we have a token
+        if (sessionToken && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            console.log(`[Gary] Reconnecting in ${RECONNECT_DELAY}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+            setTimeout(() => connect(sessionToken), RECONNECT_DELAY);
+        }
     };
 
-    ws.onerror = () => {
+    ws.onerror = (error) => {
+        console.log('[Gary] WebSocket error:', error);
         updateStatus('disconnected');
     };
 }
@@ -237,23 +252,35 @@ let codeBlockCounter = 0;
 
 function formatMessage(content) {
     // Basic markdown-ish formatting
-    return content
-        // Code blocks with run button
-        .replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-            const id = `code-block-${++codeBlockCounter}`;
-            const escapedCode = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const langLabel = lang || 'code';
-            return `<div class="code-block-wrapper">
-                <button class="run-code-btn" onclick="runCodeBlock('${id}', '${lang || 'python'}')">Run</button>
-                <pre><code id="${id}" data-lang="${langLabel}">${escapedCode}</code></pre>
-            </div>`;
-        })
+    // First, extract code blocks and replace with placeholders
+    const codeBlocks = [];
+    let processed = content.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+        const id = `code-block-${++codeBlockCounter}`;
+        const escapedCode = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const langLabel = lang || 'code';
+        const placeholder = `__CODEBLOCK_${codeBlocks.length}__`;
+        codeBlocks.push(`<div class="code-block-wrapper">
+            <button class="run-code-btn" onclick="runCodeBlock('${id}', '${lang || 'python'}')">Run</button>
+            <pre><code id="${id}" data-lang="${langLabel}">${escapedCode}</code></pre>
+        </div>`);
+        return placeholder;
+    });
+
+    // Apply other formatting (these won't affect code blocks now)
+    processed = processed
         // Inline code
         .replace(/`([^`]+)`/g, '<code>$1</code>')
         // Bold
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-        // Line breaks
+        // Line breaks (only outside code blocks now)
         .replace(/\n/g, '<br>');
+
+    // Restore code blocks
+    codeBlocks.forEach((block, i) => {
+        processed = processed.replace(`__CODEBLOCK_${i}__`, block);
+    });
+
+    return processed;
 }
 
 function runCodeBlock(blockId, lang) {
@@ -261,6 +288,9 @@ function runCodeBlock(blockId, lang) {
     if (!codeEl) return;
 
     const code = codeEl.textContent;
+    console.log('[Gary] Code block innerHTML:', codeEl.innerHTML);
+    console.log('[Gary] Code block textContent:', JSON.stringify(code));
+    console.log('[Gary] Code has newlines:', code.includes('\n'));
 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         alert('Not connected. Please refresh the page.');
@@ -937,6 +967,7 @@ function closeApprovalModal() {
 let pendingAgentApproval = null;
 
 function showAgentApprovalModal(data) {
+    console.log('[Gary] showAgentApprovalModal called with:', data);
     pendingAgentApproval = data;
     const details = data.details || {};
 
@@ -1020,37 +1051,57 @@ function showAgentApprovalModal(data) {
 }
 
 function approveAgentAction() {
-    if (pendingAgentApproval && ws) {
-        ws.send(JSON.stringify({
+    console.log('[Gary] approveAgentAction called');
+    console.log('[Gary] pendingAgentApproval:', pendingAgentApproval);
+    console.log('[Gary] ws:', ws);
+    console.log('[Gary] ws.readyState:', ws ? ws.readyState : 'null');
+
+    if (pendingAgentApproval && ws && ws.readyState === WebSocket.OPEN) {
+        const msg = {
             type: 'approval_response',
             approval_id: pendingAgentApproval.approval_id,
             approved: true,
             trust: false
-        }));
+        };
+        console.log('[Gary] Sending approval_response:', msg);
+        ws.send(JSON.stringify(msg));
+        console.log('[Gary] Sent!');
+    } else {
+        console.log('[Gary] Cannot send - missing pendingAgentApproval or ws not connected');
     }
     closeAgentApprovalModal();
 }
 
 function trustAgentSession() {
-    if (pendingAgentApproval && ws) {
-        ws.send(JSON.stringify({
+    console.log('[Gary] trustAgentSession called');
+    if (pendingAgentApproval && ws && ws.readyState === WebSocket.OPEN) {
+        const msg = {
             type: 'approval_response',
             approval_id: pendingAgentApproval.approval_id,
             approved: true,
             trust: true
-        }));
+        };
+        console.log('[Gary] Sending trust approval_response:', msg);
+        ws.send(JSON.stringify(msg));
+    } else {
+        console.log('[Gary] Cannot send trust - ws not connected');
     }
     closeAgentApprovalModal();
 }
 
 function rejectAgentAction() {
-    if (pendingAgentApproval && ws) {
-        ws.send(JSON.stringify({
+    console.log('[Gary] rejectAgentAction called');
+    if (pendingAgentApproval && ws && ws.readyState === WebSocket.OPEN) {
+        const msg = {
             type: 'approval_response',
             approval_id: pendingAgentApproval.approval_id,
             approved: false,
             trust: false
-        }));
+        };
+        console.log('[Gary] Sending reject approval_response:', msg);
+        ws.send(JSON.stringify(msg));
+    } else {
+        console.log('[Gary] Cannot send reject - ws not connected');
     }
     closeAgentApprovalModal();
 }

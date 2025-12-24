@@ -1761,14 +1761,18 @@ async def client_websocket(websocket: WebSocket, token: str):
     try:
         while True:
             message = await websocket.receive()
+            print(f"[WS Client] Raw message type: {message.get('type')}")
 
             if message["type"] == "websocket.disconnect":
+                print(f"[WS Client] Disconnect received")
                 break
 
             if "text" not in message:
+                print(f"[WS Client] No text in message: {message}")
                 continue
 
             data = json.loads(message["text"])
+            print(f"[WS Client] Received: type={data.get('type')}")
 
             # Handle project/session switching
             if data.get("type") == "set_project":
@@ -1884,7 +1888,10 @@ async def client_websocket(websocket: WebSocket, token: str):
 
             # Handle approval responses from web client - forward to agent
             if data.get("type") == "approval_response":
+                print(f"[Approval] Received response: {data.get('approval_id')} approved={data.get('approved')}")
                 current_agent = desktop_agents.get(user.user_id)
+                print(f"[Approval] Agent lookup for user {user.user_id[:8]}: {'found' if current_agent else 'NOT FOUND'}")
+                print(f"[Approval] Desktop agents: {list(desktop_agents.keys())}")
                 if current_agent:
                     try:
                         await current_agent.websocket.send_json({
@@ -1893,8 +1900,11 @@ async def client_websocket(websocket: WebSocket, token: str):
                             "approved": data.get("approved", False),
                             "trust": data.get("trust", False)
                         })
-                    except:
-                        pass
+                        print(f"[Approval] Forwarded to agent successfully")
+                    except Exception as e:
+                        print(f"[Approval] Failed to forward: {e}")
+                else:
+                    print(f"[Approval] No agent found for user!")
                 continue
 
             # Handle file operations - forward to agent
