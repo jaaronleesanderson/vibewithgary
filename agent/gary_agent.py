@@ -721,20 +721,29 @@ class GaryAgent:
 
                     # Start message receiver and processor concurrently
                     message_queue = asyncio.Queue()
+                    receiver_done = asyncio.Event()
 
                     async def receive_messages():
                         """Receive messages and put them in queue."""
-                        async for message in ws:
-                            try:
-                                data = json.loads(message)
-                                await message_queue.put(data)
-                            except json.JSONDecodeError:
-                                print(f"  Invalid message received")
+                        try:
+                            async for message in ws:
+                                try:
+                                    data = json.loads(message)
+                                    await message_queue.put(data)
+                                except json.JSONDecodeError:
+                                    print(f"  Invalid message received")
+                        finally:
+                            receiver_done.set()
 
                     async def process_messages():
                         """Process messages from queue."""
-                        while True:
-                            data = await message_queue.get()
+                        while not receiver_done.is_set() or not message_queue.empty():
+                            try:
+                                # Use wait_for to check receiver_done periodically
+                                data = await asyncio.wait_for(message_queue.get(), timeout=0.5)
+                            except asyncio.TimeoutError:
+                                continue
+
                             msg_type = data.get("type")
 
                             # Handle approval_response immediately (don't block)
@@ -750,7 +759,7 @@ class GaryAgent:
                                 # Create task for other handlers so they don't block
                                 asyncio.create_task(self.handle_message(data))
 
-                    # Run both concurrently - when receiver ends, we're done
+                    # Run both concurrently
                     await asyncio.gather(
                         receive_messages(),
                         process_messages()
