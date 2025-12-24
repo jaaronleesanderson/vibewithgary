@@ -639,12 +639,15 @@ class GaryAgent:
             if await self.prompt_approval(msg_type, message, request_id):
                 code = message.get("code", "")
                 language = message.get("language", "python")
+                print(f"  [DEBUG] Executing {language} code: {code[:100]}...")
                 result = await self.execute_code(code, language)
                 status = "✓" if result["success"] else "✗"
                 print(f"  {status} Execution {'completed' if result['success'] else 'failed'} ({result['duration_ms']}ms)")
+                if not result["success"]:
+                    print(f"  [DEBUG] stderr: {result.get('stderr', 'none')}")
             else:
                 result = {"success": False, "error": "Operation denied by user", "stdout": "", "stderr": "Operation denied by user", "exit_code": -1}
-            await self.send_result(request_id, "execution_result", result)
+            await self.send_result(request_id, "execution", result)
 
     async def send_result(self, request_id: str, operation: str, result: dict):
         """Send operation result back to server."""
