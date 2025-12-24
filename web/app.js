@@ -760,19 +760,27 @@ async function submitPairingCode() {
         return;
     }
 
+    const token = localStorage.getItem('gary_session_token');
+    if (!token) {
+        errorEl.textContent = 'Please login with GitHub first';
+        errorEl.style.display = 'block';
+        return;
+    }
+
     try {
-        const response = await fetch(`${API_URL}/api/pair?code=${code}`, {
-            method: 'POST'
+        const response = await fetch(`${API_URL}/api/pair-agent`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ code })
         });
 
         if (response.ok) {
-            const data = await response.json();
-            // Store the token and reconnect
-            sessionStorage.setItem('gary_token', data.token);
+            hasDesktopAgent = true;
             closeAgentInstallModal();
-            // Reconnect WebSocket with new token
-            if (ws) ws.close();
-            connectWebSocket();
+            updateStatus('connected');
             alert('Agent connected! You can now run code locally.');
         } else {
             const err = await response.json();
@@ -934,21 +942,39 @@ function closeConnectModal() {
 }
 
 async function connectWithCode() {
-    const code = document.getElementById('pairingInput').value.trim();
+    const code = document.getElementById('pairingInput').value.trim().toUpperCase();
     if (code.length !== 6) {
-        alert('Please enter a 6-digit code');
+        alert('Please enter a 6-character code');
+        return;
+    }
+
+    const token = localStorage.getItem('gary_session_token');
+    if (!token) {
+        alert('Please login with GitHub first');
+        loginWithGitHub();
         return;
     }
 
     try {
-        const resp = await fetch(`${API_URL}/api/pair?code=${code}`, { method: 'POST' });
+        const resp = await fetch(`${API_URL}/api/pair-agent`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ code })
+        });
         const data = await resp.json();
 
         if (!resp.ok) {
             throw new Error(data.detail || 'Pairing failed');
         }
 
-        connect(data.session_token);
+        // Successfully paired - update status and close modal
+        hasDesktopAgent = true;
+        closeConnectModal();
+        updateStatus('connected');
+        alert('Desktop agent connected! You can now run code locally.');
     } catch (e) {
         alert(e.message);
     }
